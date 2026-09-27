@@ -24,8 +24,14 @@ from openpyxl.utils import get_column_letter
 
 import streamlit as st
 from groq import Groq
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
+
+# Optional local vector database imports
+try:
+    from langchain_community.embeddings import HuggingFaceEmbeddings
+    from langchain_community.vectorstores import Chroma
+    HAS_CHROMA = True
+except ImportError:
+    HAS_CHROMA = False
 
 # Live Internet Search Engine
 try:
@@ -264,14 +270,17 @@ def perform_live_web_search(query, max_results=4):
         return ""
     return ""
 
-# --- 1. LOCAL DATABASE SETUP (AUTO-CLOSING) ---
+# --- 1. LOCAL DATABASE SETUP (AUTO-CLOSING & WAL MODE) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "tax_system.db")
 
 @contextlib.contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60.0, check_same_thread=False)
+    # WAL Mode prevents "database is locked" errors in multi-threaded Streamlit
+    conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA busy_timeout = 30000;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
     try:
         yield conn
         conn.commit()
@@ -610,15 +619,18 @@ def generate_xlsx(text):
 # --- 2. VECTOR DATABASE ---
 @st.cache_resource
 def get_vector_db():
-    if os.path.exists("tax_db"):
-        embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-        return Chroma(persist_directory="tax_db", embedding_function=embeddings)
+    if HAS_CHROMA and os.path.exists("tax_db"):
+        try:
+            embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            return Chroma(persist_directory="tax_db", embedding_function=embeddings)
+        except Exception:
+            return None
     return None
 
 vector_db = get_vector_db()
 
-# --- 3. BACKGROUND API KEY ---
-groq_key = st.secrets.get("GROQ_API_KEY", "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")
+# --- 3. SECURE API KEY (NO LEAKED FALLBACKS) ---
+groq_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
 
 # --- 4. PERMANENT AUTO-LOGIN & STATE ---
 if "user_id" not in st.session_state:
@@ -635,6 +647,8 @@ if "uploader_id" not in st.session_state:
     st.session_state.uploader_id = 0
 if "last_processed_voice" not in st.session_state:
     st.session_state.last_processed_voice = None
+if "custom_groq_key" not in st.session_state:
+    st.session_state.custom_groq_key = ""
 
 auth_token = st.query_params.get("session_auth")
 if not st.session_state.user_id and auth_token:
@@ -704,10 +718,21 @@ if not st.session_state.user_id:
                         st.error("This email is already registered.")
     st.stop()
 
+# Effective Groq Key resolution
+active_groq_key = st.session_state.custom_groq_key.strip() or groq_key
+
 # --- 6. SIDEBAR: CHAT HISTORY & PROFILE ---
 with st.sidebar:
     st.markdown("### 🛡️ Kavach AI")
     st.caption("NextGen FinHR Architecture")
+
+    # Safe Key Input if not found in env
+    if not active_groq_key:
+        st.warning("⚠️ Groq API Key required!")
+        api_input = st.text_input("Enter Groq API Key", type="password", key="sidebar_key_input")
+        if api_input:
+            st.session_state.custom_groq_key = api_input
+            st.rerun()
 
     if st.button("➕ New Consultation", use_container_width=True):
         st.session_state.current_convo_id = None
@@ -763,11 +788,6 @@ with st.sidebar:
         st.rerun()
 
 # --- 7. INTENT & MESSAGES EXTRACTION ---
-def check_is_image_intent(query):
-    q = query.lower()
-    img_words = ["poster", "banner", "generate image", "make photo", "create graphic", "banao poster", "design photo"]
-    return any(w in q for w in img_words)
-
 current_messages = []
 full_chat_text = ""
 if st.session_state.current_convo_id:
@@ -861,24 +881,27 @@ with c_mic_box:
         st.caption("माइक पर क्लिक करें, सवाल बोलें और दोबारा क्लिक करके स्टॉप करें:")
         voice_record = st.audio_input("Record voice question", label_visibility="collapsed", key=f"audio_recorder_{st.session_state.uploader_id}")
         if voice_record is not None:
-            v_bytes = voice_record.read()
-            v_hash = hashlib.md5(v_bytes).hexdigest()
-            if st.session_state.last_processed_voice != v_hash:
-                st.session_state.last_processed_voice = v_hash
-                with st.spinner("🎙️ आवाज़ को टेक्स्ट में बदला जा रहा है..."):
-                    try:
-                        v_client = Groq(api_key=groq_key)
-                        transcription = v_client.audio.transcriptions.create(
-                            file=("voice_prompt.wav", v_bytes),
-                            model="whisper-large-v3-turbo",
-                            language="hi"
-                        )
-                        spoken_text = transcription.text.strip()
-                        if spoken_text:
-                            st.session_state.chip_query = spoken_text
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Voice Transcription Error: {e}")
+            if not active_groq_key:
+                st.error("Please configure your Groq API Key first.")
+            else:
+                v_bytes = voice_record.read()
+                v_hash = hashlib.md5(v_bytes).hexdigest()
+                if st.session_state.last_processed_voice != v_hash:
+                    st.session_state.last_processed_voice = v_hash
+                    with st.spinner("🎙️ आवाज़ को टेक्स्ट में बदला जा रहा है..."):
+                        try:
+                            v_client = Groq(api_key=active_groq_key)
+                            transcription = v_client.audio.transcriptions.create(
+                                file=("voice_prompt.wav", v_bytes),
+                                model="whisper-large-v3-turbo",
+                                language="hi"
+                            )
+                            spoken_text = transcription.text.strip()
+                            if spoken_text:
+                                st.session_state.chip_query = spoken_text
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Voice Transcription Error: {e}")
 
 # Live Attachment Banner (Shown right above the prompt box like ChatGPT)
 if st.session_state.active_attachment:
@@ -907,6 +930,10 @@ elif chat_input_val:
     user_query = chat_input_val
 
 if user_query:
+    if not active_groq_key:
+        st.error("⚠️ Groq API key is missing. Please set GROQ_API_KEY environment variable or enter it in the sidebar.")
+        st.stop()
+
     if not st.session_state.current_convo_id:
         title = user_query[:35]
         with get_db() as c_conn:
@@ -915,39 +942,49 @@ if user_query:
             c_conn.commit()
             st.session_state.current_convo_id = cur.lastrowid
 
-    # Process Attachment Data
+    # FIX #1: Track image type cleanly to prevent NameError
     attached_data_text = ""
     attached_image_b64 = None
+    attached_img_type = "jpeg"
     save_user_content = user_query
 
     if st.session_state.active_attachment:
         att = st.session_state.active_attachment
-        if att["ext"] in ["png", "jpg", "jpeg"]:
+        att_ext = att.get("ext", "").lower()
+        if att_ext in ["png", "jpg", "jpeg"]:
             attached_image_b64 = base64.b64encode(att["bytes"]).decode("utf-8")
+            attached_img_type = "png" if att_ext == "png" else "jpeg"
             save_user_content = f"[ATTACHED_IMAGE]:{attached_image_b64}\n[PROMPT]: {user_query}"
-        elif att["ext"] == "pdf":
+        elif att_ext == "pdf":
             try:
                 reader = PdfReader(io.BytesIO(att["bytes"]))
-                pdf_text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+                extracted_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
+                pdf_text = "\n".join(extracted_pages)
+                # FIX #5: Warn on scanned image PDFs
+                if not pdf_text.strip():
+                    pdf_text = "[Notice: This PDF appears to be a scanned image document without extractable text layer. Please upload as an image (JPG/PNG) for visual inspection.]"
                 attached_data_text = f"\n[User Attached PDF Document ({att['name']}) Content]:\n{pdf_text[:15000]}"
                 save_user_content = f"📎 *Attached: {att['name']}*\n\n{user_query}"
             except Exception as e:
                 attached_data_text = f"\n[Error reading PDF {att['name']}: {e}]"
-        elif att["ext"] in ["xlsx", "xls"]:
+        elif att_ext in ["xlsx", "xls"]:
             try:
                 df = pd.read_excel(io.BytesIO(att["bytes"]))
                 attached_data_text = f"\n[User Attached Excel Sheet ({att['name']}) Data]:\n{df.head(50).to_markdown()}"
                 save_user_content = f"📊 *Attached Excel: {att['name']}*\n\n{user_query}"
             except Exception as e:
                 attached_data_text = f"\n[Error reading Excel: {e}]"
-        elif att["ext"] == "csv":
+        elif att_ext == "csv":
             try:
-                df = pd.read_csv(io.BytesIO(att["bytes"]))
+                try:
+                    df = pd.read_csv(io.BytesIO(att["bytes"]), encoding="utf-8")
+                except UnicodeDecodeError:
+                    df = pd.read_csv(io.BytesIO(att["bytes"]), encoding="latin1")
                 attached_data_text = f"\n[User Attached CSV File ({att['name']}) Data]:\n{df.head(50).to_markdown()}"
                 save_user_content = f"📊 *Attached CSV: {att['name']}*\n\n{user_query}"
             except Exception as e:
                 attached_data_text = f"\n[Error reading CSV: {e}]"
-        elif att["ext"] == "json":
+        elif att_ext == "json":
             try:
                 j_obj = json.loads(att["bytes"].decode("utf-8"))
                 attached_data_text = f"\n[User Attached JSON ({att['name']}) Data]:\n{json.dumps(j_obj, indent=2)[:15000]}"
@@ -965,7 +1002,7 @@ if user_query:
 
     with st.chat_message("user"):
         if attached_image_b64:
-            st.image(f"data:image/jpeg;base64,{attached_image_b64}", width=320)
+            st.image(f"data:image/{attached_img_type};base64,{attached_image_b64}", width=320)
         st.markdown(user_query)
 
     # 1. Statutory Context from Local Vector DB
@@ -984,9 +1021,13 @@ if user_query:
                 retrieved_docs = []
         
         if not retrieved_docs:
-            retrieved_docs = vector_db.similarity_search(user_query, k=6)
+            try:
+                retrieved_docs = vector_db.similarity_search(user_query, k=6)
+            except Exception:
+                retrieved_docs = []
             
-        statutory_context = "\n\n---\n\n".join([d.page_content for d in retrieved_docs])
+        if retrieved_docs:
+            statutory_context = "\n\n---\n\n".join([d.page_content for d in retrieved_docs])
 
     # 2. Live Web Search
     live_web_context = perform_live_web_search(user_query)
@@ -1030,7 +1071,7 @@ if user_query:
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
-        client = Groq(api_key=groq_key)
+        client = Groq(api_key=active_groq_key)
         last_error = None
         
         try:
@@ -1040,7 +1081,13 @@ if user_query:
 
         # --- MULTIMODAL VISION ROUTING (IMAGE QUERIES) ---
         if attached_image_b64:
-            preferred_vision = ["qwen/qwen3.8-27b", "qwen/qwen3.6-27b"]
+            # FIX #2: Reliable Groq Vision models
+            preferred_vision = [
+                "llama-3.2-11b-vision-preview",
+                "llama-3.2-90b-vision-preview",
+                "qwen/qwen3.8-27b",
+                "qwen/qwen3.6-27b"
+            ]
             vision_models = [m for m in preferred_vision if m in available_models] or preferred_vision
             
             vision_system = (
@@ -1049,14 +1096,13 @@ if user_query:
                 "structured analysis, tax breakdown, and statutory action items."
             )
             
-            img_format = "png" if (att and att.get("ext") == "png") else "jpeg"
             vision_messages = [
                 {"role": "system", "content": vision_system},
                 {
                     "role": "user",
                     "content": [
                         {"type": "text", "text": f"{user_query}\n\nPlease inspect all numbers, tax sections, dates, and details from this image."},
-                        {"type": "image_url", "image_url": {"url": f"data:image/{img_format};base64,{attached_image_b64}"}}
+                        {"type": "image_url", "image_url": {"url": f"data:image/{attached_img_type};base64,{attached_image_b64}"}}
                     ]
                 }
             ]
@@ -1083,7 +1129,14 @@ if user_query:
                     llm_messages.append({"role": prev_msg["role"], "content": prev_msg["content"]})
             llm_messages.append({"role": "user", "content": user_query})
 
-            preferred_text = ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"]
+            # FIX #2: Reliable production text models
+            preferred_text = [
+                "llama-3.3-70b-versatile",
+                "llama-3.1-8b-instant",
+                "openai/gpt-oss-120b",
+                "openai/gpt-oss-20b",
+                "qwen/qwen3.8-27b"
+            ]
             text_models = [m for m in preferred_text if m in available_models] or preferred_text
             
             for m_name in text_models:
