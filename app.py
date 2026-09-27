@@ -12,29 +12,22 @@ import datetime
 import threading
 import urllib.parse
 import contextlib
+import zipfile
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+# --- CORE LIBRARIES ---
 import pandas as pd
-import os
-import io
-import re
-import json
-import time
-import base64
-import secrets
-import sqlite3
-import hashlib
-import warnings
-import datetime
-import threading
-import urllib.parse
-import contextlib
+import streamlit as st
+from groq import Groq
+
 # --- SAFE IMPORTS (Crash Proof) ---
 try:
     from PIL import Image
+    HAS_PIL = True
 except ImportError:
-    pass
+    HAS_PIL = False
 
 try:
     from pypdf import PdfReader
@@ -60,9 +53,6 @@ try:
 except ImportError:
     HAS_OPENPYXL = False
 
-import streamlit as st
-from groq import Groq
-
 # Optional local vector database imports
 try:
     from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -79,6 +69,15 @@ except ImportError:
     HAS_DDG = False
 
 warnings.filterwarnings("ignore")
+
+# --- AUTO EXTRACT KNOWLEDGE BASE (IF ZIPPED) ---
+for zip_file, target_folder in [("knowledge_base.zip", "knowledge_base"), ("tax_db.zip", "tax_db")]:
+    if not os.path.exists(target_folder) and os.path.exists(zip_file):
+        try:
+            with zipfile.ZipFile(zip_file, "r") as zip_ref:
+                zip_ref.extractall(".")
+        except Exception:
+            pass
 
 # --- KAVACH AI CONFIGURATION ---
 st.set_page_config(
@@ -525,21 +524,11 @@ def build_due_alert_html(user_name, item, delta_days):
     """
 
 def run_daily_compliance_check():
-    """
-    Executes 5-Stage Automated Notification Check for all registered users:
-    1. Month 1st -> Monthly digest
-    2. T-2 Days -> Upcoming reminder
-    3. T-1 Day -> Due tomorrow alert
-    4. T-0 Day -> Due today action alert
-    5. T+1 Day -> Overdue / Missed follow-up warning
-    """
     today = datetime.date.today()
     today_str = today.strftime("%Y-%m-%d")
     
-    # Deadlines for current month
     deadlines = get_compliance_deadlines(today.year, today.month)
     
-    # Also include previous month deadlines if today is day 1 to 3 (for T+1 overdue check on month-end filings)
     prev_deadlines = []
     if today.day <= 3:
         prev_month = 12 if today.month == 1 else today.month - 1
@@ -558,7 +547,6 @@ def run_daily_compliance_check():
                 if not user_email:
                     continue
 
-                # TRIGGER 1: 1st of the month digest
                 if today.day == 1:
                     t1_key = f"{today.year}_{today.month}_MONTHLY_DIGEST"
                     cur.execute("SELECT id FROM compliance_notifications_log WHERE user_id=? AND compliance_key=? AND trigger_type='MONTHLY_DIGEST'", (user_id, t1_key))
@@ -570,7 +558,6 @@ def run_daily_compliance_check():
                             cur.execute("INSERT INTO compliance_notifications_log (user_id, compliance_key, trigger_type, sent_date) VALUES (?, ?, 'MONTHLY_DIGEST', ?)", (user_id, t1_key, today_str))
                             conn.commit()
 
-                # TRIGGERS 2, 3, 4, 5: T-2, T-1, T-0, T+1 alerts
                 for item in all_check_deadlines:
                     delta_days = (item["due_date"] - today).days
                     c_key = f"{item['form']}_{item['due_date'].strftime('%Y%m%d')}"
@@ -605,16 +592,14 @@ def run_daily_compliance_check():
 # --- BACKGROUND NOTIFICATION SCHEDULER (DAEMON THREAD) ---
 @st.cache_resource
 def init_background_compliance_scheduler():
-    """Starts a lightweight daemon thread to run daily compliance checks at 08:00 AM IST"""
     def scheduler_loop():
         last_run_day = None
         while True:
             now = datetime.datetime.now()
-            # Run once daily around 8 AM or on initial start
             if now.hour == 8 and last_run_day != now.date():
                 last_run_day = now.date()
                 run_daily_compliance_check()
-            time.sleep(1800) # Check every 30 minutes
+            time.sleep(1800)
 
     t = threading.Thread(target=scheduler_loop, daemon=True)
     t.start()
@@ -720,13 +705,20 @@ def hash_val(val):
 
 # --- PROFESSIONAL WORD (.DOCX) EXPORT HELPER ---
 def set_cell_background(cell, hex_color):
+    if not HAS_DOCX:
+        return
     tcPr = cell._tc.get_or_add_tcPr()
     shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_color}"/>')
     tcPr.append(shd)
 
 def generate_docx(title, full_chat_text):
+    if not HAS_DOCX:
+        bio = io.BytesIO()
+        bio.write(b"Word export not available: python-docx not installed.")
+        bio.seek(0)
+        return bio
+
     doc = Document()
-    
     for section in doc.sections:
         section.top_margin = Inches(0.8)
         section.bottom_margin = Inches(0.8)
@@ -1000,10 +992,11 @@ def generate_xlsx(text):
 # --- 2. VECTOR DATABASE ---
 @st.cache_resource
 def get_vector_db():
-    if HAS_CHROMA and os.path.exists("tax_db"):
+    target_dir = "tax_db" if os.path.exists("tax_db") else ("knowledge_base" if os.path.exists("knowledge_base") else None)
+    if HAS_CHROMA and target_dir:
         try:
             embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-            return Chroma(persist_directory="tax_db", embedding_function=embeddings)
+            return Chroma(persist_directory=target_dir, embedding_function=embeddings)
         except Exception:
             return None
     return None
@@ -1011,7 +1004,7 @@ def get_vector_db():
 vector_db = get_vector_db()
 
 # --- 3. SECURE API KEY ---
-groq_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+groq_key = os.environ.get("GROQ_API_KEY") or (st.secrets.get("GROQ_API_KEY", "") if hasattr(st, "secrets") else "")
 
 # --- 4. PERMANENT AUTO-LOGIN & STATE ---
 if "user_id" not in st.session_state:
@@ -1264,7 +1257,6 @@ with st.expander("📅 Statutory Compliance Calendar & Due Date Tracker", expand
     if cat_filter != "All Categories":
         active_deadlines = [d for d in active_deadlines if d["category"] == cat_filter]
 
-    # Metrics Summary
     today_dt = datetime.date.today()
     pending_count = len([d for d in active_deadlines if d["due_date"] >= today_dt])
     overdue_count = len([d for d in active_deadlines if d["due_date"] < today_dt and d["due_date"].month == today_dt.month and d["due_date"].year == today_dt.year])
@@ -1276,7 +1268,6 @@ with st.expander("📅 Statutory Compliance Calendar & Due Date Tracker", expand
 
     st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
     
-    # Render Rows
     for item in active_deadlines:
         c_badge = "badge-gst" if "GST" in item["category"] else ("badge-tds" if "TDS" in item["category"] else ("badge-pf" if "PF" in item["category"] else "badge-tax"))
         formatted_date = item["due_date"].strftime("%d %b, %Y (%A)")
@@ -1425,16 +1416,20 @@ if user_query:
             attached_img_type = "png" if att_ext == "png" else "jpeg"
             save_user_content = f"[ATTACHED_IMAGE]:{attached_image_b64}\n[PROMPT]: {user_query}"
         elif att_ext == "pdf":
-            try:
-                reader = PdfReader(io.BytesIO(att["bytes"]))
-                extracted_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
-                pdf_text = "\n".join(extracted_pages)
-                if not pdf_text.strip():
-                    pdf_text = "[Notice: This PDF appears to be a scanned image document without extractable text layer. Please upload as an image (JPG/PNG) for visual inspection.]"
-                attached_data_text = f"\n[User Attached PDF Document ({att['name']}) Content]:\n{pdf_text[:15000]}"
+            if HAS_PYPDF:
+                try:
+                    reader = PdfReader(io.BytesIO(att["bytes"]))
+                    extracted_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
+                    pdf_text = "\n".join(extracted_pages)
+                    if not pdf_text.strip():
+                        pdf_text = "[Notice: This PDF appears to be a scanned image document without extractable text layer. Please upload as an image (JPG/PNG) for visual inspection.]"
+                    attached_data_text = f"\n[User Attached PDF Document ({att['name']}) Content]:\n{pdf_text[:15000]}"
+                    save_user_content = f"📎 *Attached: {att['name']}*\n\n{user_query}"
+                except Exception as e:
+                    attached_data_text = f"\n[Error reading PDF {att['name']}: {e}]"
+            else:
+                attached_data_text = f"\n[Notice: pypdf library is not available to extract text from {att['name']}]"
                 save_user_content = f"📎 *Attached: {att['name']}*\n\n{user_query}"
-            except Exception as e:
-                attached_data_text = f"\n[Error reading PDF {att['name']}: {e}]"
         elif att_ext in ["xlsx", "xls"]:
             try:
                 df = pd.read_excel(io.BytesIO(att["bytes"]))
