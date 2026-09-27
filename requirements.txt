@@ -1,10 +1,8 @@
-cat << 'EOF' > requirements.txt
 streamlit
 groq
-pypdf
 pandas
-openpyxl
+Pillow
+pypdf
 python-docx
-pillow
+openpyxl
 duckduckgo_search
-EOF
