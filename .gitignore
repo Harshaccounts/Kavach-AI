@@ -1,0 +1,9 @@
+*.pdf
+Book1.pdf
+Book2.pdf
+knowledge_base/
+venv/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
