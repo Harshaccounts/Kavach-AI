@@ -12,21 +12,35 @@ import datetime
 import threading
 import urllib.parse
 import contextlib
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
+# --- SAFE IMPORTS (Crash Proof) ---
+try:
+    from PIL import Image
+except ImportError:
+    pass
 
-import pandas as pd
-from PIL import Image
-from pypdf import PdfReader
-from docx import Document
-from docx.shared import Inches, Pt, RGBColor
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.oxml import parse_xml
-from docx.oxml.ns import nsdecls
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
+try:
+    from pypdf import PdfReader
+    HAS_PYPDF = True
+except ImportError:
+    HAS_PYPDF = False
+
+try:
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+try:
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    HAS_OPENPYXL = True
+except ImportError:
+    HAS_OPENPYXL = False
 
 import streamlit as st
 from groq import Groq
