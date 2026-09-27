@@ -2,14 +2,20 @@ import os
 import io
 import re
 import json
+import time
 import base64
 import secrets
 import sqlite3
 import hashlib
 import warnings
 import datetime
+import threading
 import urllib.parse
 import contextlib
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
 import pandas as pd
 from PIL import Image
 from pypdf import PdfReader
@@ -227,16 +233,6 @@ st.markdown("""
     }
 
     /* 8. Compliance Calendar Styling */
-    .calendar-card {
-        background-color: #FFFFFF;
-        border: 1px solid #E5E5E5;
-        border-radius: 12px;
-        padding: 12px 16px;
-        margin-bottom: 8px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
     .badge-gst { background-color: #EFF6FF; color: #1D4ED8; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
     .badge-tds { background-color: #FEF3C7; color: #B45309; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
     .badge-pf { background-color: #ECFDF5; color: #047857; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
@@ -276,7 +272,6 @@ def get_compliance_deadlines(target_year, target_month):
     deadlines = []
 
     # 1. TDS Monthly Deposit (Challan ITNS 281)
-    # Deduction for preceding month. Note: March deduction is due by 30th April.
     if target_month == 4:
         tds_date = datetime.date(target_year, 4, 30)
         tds_desc = "TDS payment for March deductions (Challan 281 - extended due date)"
@@ -292,7 +287,7 @@ def get_compliance_deadlines(target_year, target_month):
         "description": tds_desc
     })
 
-    # 2. GST: GSTR-1 (Monthly outward supplies)
+    # 2. GST: GSTR-1
     deadlines.append({
         "category": "GST",
         "form": "GSTR-1",
@@ -310,7 +305,7 @@ def get_compliance_deadlines(target_year, target_month):
         "description": "Deposit of employee & employer contributions (EPF ECR & ESIC) for previous month's wages"
     })
 
-    # 4. GST: GSTR-3B (Monthly summary return & tax payment)
+    # 4. GST: GSTR-3B
     deadlines.append({
         "category": "GST",
         "form": "GSTR-3B",
@@ -320,7 +315,6 @@ def get_compliance_deadlines(target_year, target_month):
     })
 
     # 5. Quarterly TDS Returns (Form 24Q - Salary, Form 26Q - Non-Salary)
-    # Due: Q1 (Apr-Jun) -> 31 Jul; Q2 (Jul-Sep) -> 31 Oct; Q3 (Oct-Dec) -> 31 Jan; Q4 (Jan-Mar) -> 31 May
     if target_month == 7:
         deadlines.append({
             "category": "TDS",
@@ -355,7 +349,6 @@ def get_compliance_deadlines(target_year, target_month):
         })
 
     # 6. Advance Tax Installments
-    # 15 June (15%), 15 Sep (45%), 15 Dec (75%), 15 March (100%)
     if target_month == 6:
         deadlines.append({
             "category": "Advance Tax",
@@ -389,10 +382,8 @@ def get_compliance_deadlines(target_year, target_month):
             "description": "Final 100% advance income tax deposit for the current financial year"
         })
 
-    # Sort chronologically
     deadlines.sort(key=lambda x: x["due_date"])
 
-    # Compute status relative to current date
     for item in deadlines:
         delta = (item["due_date"] - today).days
         item["days_delta"] = delta
@@ -410,6 +401,194 @@ def get_compliance_deadlines(target_year, target_month):
             item["status_color"] = "#10B981"
 
     return deadlines
+
+# --- AUTOMATED EMAIL NOTIFICATION SYSTEM ---
+SMTP_SERVER = os.environ.get("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", 587))
+SMTP_EMAIL = os.environ.get("SMTP_EMAIL") or (st.secrets.get("SMTP_EMAIL", "") if hasattr(st, "secrets") else "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD") or (st.secrets.get("SMTP_PASSWORD", "") if hasattr(st, "secrets") else "")
+
+def send_compliance_email(to_email, subject, html_content):
+    """Sends a professional HTML email via SMTP"""
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        return False, "SMTP Credentials (SMTP_EMAIL / SMTP_PASSWORD) not configured."
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"Kavach AI — NextGen FinHR <{SMTP_EMAIL}>"
+        msg["To"] = to_email
+
+        part = MIMEText(html_content, "html")
+        msg.attach(part)
+
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=15) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+        return True, "Success"
+    except Exception as e:
+        return False, str(e)
+
+def build_monthly_digest_html(user_name, month_str, deadlines):
+    rows_html = ""
+    for d in deadlines:
+        rows_html += f"""
+        <tr style="border-bottom: 1px solid #E2E8F0;">
+            <td style="padding: 10px; font-weight: 600;">{d['due_date'].strftime('%d %b, %Y')}</td>
+            <td style="padding: 10px;"><span style="background-color: #EEF2FF; color: #4338CA; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;">{d['category']}</span></td>
+            <td style="padding: 10px;"><strong>{d['title']}</strong> (<code>{d['form']}</code>)<br><small style="color: #64748B;">{d['description']}</small></td>
+        </tr>
+        """
+    return f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E5E5E5; border-radius: 12px; padding: 24px; color: #0F172A; background-color: #FFFFFF;">
+        <h2 style="color: #1E3A8A; margin-top: 0;">🛡️ Kavach AI — Monthly Statutory Digest</h2>
+        <p>Dear <strong>{user_name}</strong>,</p>
+        <p>Here is your comprehensive statutory compliance calendar for <strong>{month_str}</strong>. Plan your filings early to eliminate interest and late fees:</p>
+        <table style="width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14px;">
+            <tr style="background-color: #F8FAFC; text-align: left; border-bottom: 2px solid #CBD5E1;">
+                <th style="padding: 10px;">Due Date</th>
+                <th style="padding: 10px;">Category</th>
+                <th style="padding: 10px;">Compliance Item</th>
+            </tr>
+            {rows_html}
+        </table>
+        <p style="font-size: 13.5px; color: #64748B;">Log in to NextGen FinHR Kavach AI dashboard anytime to generate exact reconciliations and filing checklists.</p>
+        <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 20px 0;">
+        <small style="color: #94A3B8;">NextGen FinHR Solutions • Automated Compliance Sentinel</small>
+    </div>
+    """
+
+def build_due_alert_html(user_name, item, delta_days):
+    if delta_days == 2:
+        badge_color = "#D97706"
+        status_txt = "Due in 2 Days"
+        header_title = f"⏳ Upcoming Deadline: {item['title']}"
+    elif delta_days == 1:
+        badge_color = "#EA580C"
+        status_txt = "Due Tomorrow"
+        header_title = f"⚠️ Tomorrow Due: Action Required for {item['title']}"
+    elif delta_days == 0:
+        badge_color = "#DC2626"
+        status_txt = "Due Today!"
+        header_title = f"🚨 ACTION REQUIRED TODAY: {item['title']}"
+    else:
+        badge_color = "#B91C1C"
+        status_txt = "Deadline Passed Yesterday"
+        header_title = f"🔴 Overdue Alert: Did you file {item['title']}?"
+
+    return f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #E5E5E5; border-radius: 12px; padding: 24px; color: #0F172A; background-color: #FFFFFF;">
+        <div style="display: inline-block; background-color: {badge_color}; color: #FFFFFF; font-size: 12px; font-weight: bold; padding: 4px 12px; border-radius: 12px; margin-bottom: 12px;">{status_txt}</div>
+        <h2 style="color: #0F172A; margin: 0 0 10px 0;">{header_title}</h2>
+        <p>Dear <strong>{user_name}</strong>,</p>
+        <div style="background-color: #F8FAFC; border-left: 4px solid {badge_color}; padding: 14px; margin: 16px 0; border-radius: 4px;">
+            <strong style="font-size: 16px;">{item['title']}</strong> &nbsp;•&nbsp; <code>{item['form']}</code><br>
+            <span style="color: #475569; font-size: 14px;">{item['description']}</span><br>
+            <p style="margin: 8px 0 0 0; font-size: 14px;"><strong>Statutory Due Date:</strong> {item['due_date'].strftime('%d %B, %Y (%A)')}</p>
+        </div>
+        <p style="font-size: 13.5px; color: #334155;">Ensure challans are paid, returns are submitted, and DSC/EVC verification is completed on time to avoid statutory interest and late penalties.</p>
+        <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 20px 0;">
+        <small style="color: #94A3B8;">Kavach AI • NextGen FinHR Automated Compliance Sentinel</small>
+    </div>
+    """
+
+def run_daily_compliance_check():
+    """
+    Executes 5-Stage Automated Notification Check for all registered users:
+    1. Month 1st -> Monthly digest
+    2. T-2 Days -> Upcoming reminder
+    3. T-1 Day -> Due tomorrow alert
+    4. T-0 Day -> Due today action alert
+    5. T+1 Day -> Overdue / Missed follow-up warning
+    """
+    today = datetime.date.today()
+    today_str = today.strftime("%Y-%m-%d")
+    
+    # Deadlines for current month
+    deadlines = get_compliance_deadlines(today.year, today.month)
+    
+    # Also include previous month deadlines if today is day 1 to 3 (for T+1 overdue check on month-end filings)
+    prev_deadlines = []
+    if today.day <= 3:
+        prev_month = 12 if today.month == 1 else today.month - 1
+        prev_year = today.year - 1 if today.month == 1 else today.year
+        prev_deadlines = get_compliance_deadlines(prev_year, prev_month)
+    
+    all_check_deadlines = deadlines + prev_deadlines
+
+    try:
+        with get_db() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, name, email FROM users WHERE IFNULL(email_alerts_enabled, 1) = 1")
+            users = cur.fetchall()
+
+            for user_id, user_name, user_email in users:
+                if not user_email:
+                    continue
+
+                # TRIGGER 1: 1st of the month digest
+                if today.day == 1:
+                    t1_key = f"{today.year}_{today.month}_MONTHLY_DIGEST"
+                    cur.execute("SELECT id FROM compliance_notifications_log WHERE user_id=? AND compliance_key=? AND trigger_type='MONTHLY_DIGEST'", (user_id, t1_key))
+                    if not cur.fetchone():
+                        sub = f"📅 Statutory Compliance Digest — {today.strftime('%B %Y')} | Kavach AI"
+                        html = build_monthly_digest_html(user_name or "Client", today.strftime('%B %Y'), deadlines)
+                        ok, _ = send_compliance_email(user_email, sub, html)
+                        if ok:
+                            cur.execute("INSERT INTO compliance_notifications_log (user_id, compliance_key, trigger_type, sent_date) VALUES (?, ?, 'MONTHLY_DIGEST', ?)", (user_id, t1_key, today_str))
+                            conn.commit()
+
+                # TRIGGERS 2, 3, 4, 5: T-2, T-1, T-0, T+1 alerts
+                for item in all_check_deadlines:
+                    delta_days = (item["due_date"] - today).days
+                    c_key = f"{item['form']}_{item['due_date'].strftime('%Y%m%d')}"
+
+                    trigger_type = None
+                    subject_line = ""
+
+                    if delta_days == 2:
+                        trigger_type = "T_MINUS_2"
+                        subject_line = f"⏳ Reminder: 2 Days Left for {item['title']}"
+                    elif delta_days == 1:
+                        trigger_type = "T_MINUS_1"
+                        subject_line = f"⚠️ Tomorrow Due: Action Required for {item['title']}"
+                    elif delta_days == 0:
+                        trigger_type = "T_ZERO_DUE"
+                        subject_line = f"🚨 DUE TODAY: File & Pay {item['title']}"
+                    elif delta_days == -1:
+                        trigger_type = "T_PLUS_1_MISSED"
+                        subject_line = f"🔴 OVERDUE ALERT: Did you file {item['title']}?"
+
+                    if trigger_type:
+                        cur.execute("SELECT id FROM compliance_notifications_log WHERE user_id=? AND compliance_key=? AND trigger_type=?", (user_id, c_key, trigger_type))
+                        if not cur.fetchone():
+                            html = build_due_alert_html(user_name or "Client", item, delta_days)
+                            ok, _ = send_compliance_email(user_email, subject_line, html)
+                            if ok:
+                                cur.execute("INSERT INTO compliance_notifications_log (user_id, compliance_key, trigger_type, sent_date) VALUES (?, ?, ?, ?)", (user_id, c_key, trigger_type, today_str))
+                                conn.commit()
+    except Exception:
+        pass
+
+# --- BACKGROUND NOTIFICATION SCHEDULER (DAEMON THREAD) ---
+@st.cache_resource
+def init_background_compliance_scheduler():
+    """Starts a lightweight daemon thread to run daily compliance checks at 08:00 AM IST"""
+    def scheduler_loop():
+        last_run_day = None
+        while True:
+            now = datetime.datetime.now()
+            # Run once daily around 8 AM or on initial start
+            if now.hour == 8 and last_run_day != now.date():
+                last_run_day = now.date()
+                run_daily_compliance_check()
+            time.sleep(1800) # Check every 30 minutes
+
+    t = threading.Thread(target=scheduler_loop, daemon=True)
+    t.start()
+    return True
+
+init_background_compliance_scheduler()
 
 # --- LIVE INTERNET SEARCH FUNCTION ---
 def perform_live_web_search(query, max_results=4):
@@ -454,11 +633,16 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT,
             email TEXT UNIQUE,
-            password_hash TEXT
+            password_hash TEXT,
+            email_alerts_enabled INTEGER DEFAULT 1
         )
         """)
         try:
             conn.execute("ALTER TABLE users ADD COLUMN name TEXT")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN email_alerts_enabled INTEGER DEFAULT 1")
         except Exception:
             pass
             
@@ -483,6 +667,16 @@ def init_db():
             conversation_id INTEGER,
             role TEXT,
             content TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS compliance_notifications_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            compliance_key TEXT,
+            trigger_type TEXT,
+            sent_date TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
@@ -818,11 +1012,12 @@ if not st.session_state.user_id and auth_token:
             row = cur.fetchone()
             if row:
                 st.session_state.user_id = row[0]
-                cur.execute("SELECT name, email FROM users WHERE id=?", (row[0],))
+                cur.execute("SELECT name, email, email_alerts_enabled FROM users WHERE id=?", (row[0],))
                 u = cur.fetchone()
                 if u:
                     st.session_state.user_name = u[0] if u[0] else (u[1].split('@')[0].title() if len(u) > 1 else "User")
                     st.session_state.user_email = u[1] if len(u) > 1 else ""
+                    st.session_state.email_alerts_enabled = bool(u[2]) if len(u) > 2 and u[2] is not None else True
     except Exception:
         pass
 
@@ -841,7 +1036,7 @@ if not st.session_state.user_id:
             if submitted:
                 with get_db() as c_conn:
                     cur = c_conn.cursor()
-                    cur.execute("SELECT id, name, email FROM users WHERE email=? AND password_hash=?", (login_email.strip().lower(), hash_val(login_pw)))
+                    cur.execute("SELECT id, name, email, email_alerts_enabled FROM users WHERE email=? AND password_hash=?", (login_email.strip().lower(), hash_val(login_pw)))
                     row = cur.fetchone()
                     if row:
                         new_token = secrets.token_hex(24)
@@ -851,6 +1046,7 @@ if not st.session_state.user_id:
                         st.session_state.user_id = row[0]
                         st.session_state.user_name = row[1] if row[1] else (row[2].split('@')[0].title() if len(row) > 2 else "User")
                         st.session_state.user_email = row[2] if len(row) > 2 else ""
+                        st.session_state.email_alerts_enabled = bool(row[3]) if len(row) > 3 and row[3] is not None else True
                         st.rerun()
                     else:
                         st.error("Invalid email or password.")
@@ -869,7 +1065,7 @@ if not st.session_state.user_id:
                 else:
                     try:
                         with get_db() as c_conn:
-                            c_conn.execute("INSERT INTO users (name, email, password_hash) VALUES (?, ?, ?)", 
+                            c_conn.execute("INSERT INTO users (name, email, password_hash, email_alerts_enabled) VALUES (?, ?, ?, 1)", 
                                            (new_name.strip(), new_email.strip().lower(), hash_val(new_pw)))
                             c_conn.commit()
                         st.success("Account created successfully! Please Sign In.")
@@ -910,6 +1106,39 @@ with st.sidebar:
             st.session_state.active_attachment = None
             st.session_state.uploader_id += 1
             st.rerun()
+
+    st.divider()
+
+    # --- EMAIL ALERTS & ACCOUNT SETTINGS ---
+    st.markdown("#### 🔔 Compliance Email Alerts")
+    current_alert_pref = st.session_state.get("email_alerts_enabled", True)
+    new_alert_toggle = st.toggle("Automated Due Date Emails", value=current_alert_pref, key="alert_pref_toggle")
+    
+    if new_alert_toggle != current_alert_pref:
+        with get_db() as c_conn:
+            c_conn.execute("UPDATE users SET email_alerts_enabled=? WHERE id=?", (1 if new_alert_toggle else 0, st.session_state.user_id))
+            c_conn.commit()
+        st.session_state.email_alerts_enabled = new_alert_toggle
+        st.rerun()
+
+    if st.button("📨 Send Test Due Alert Email", use_container_width=True):
+        u_email = st.session_state.get('user_email')
+        if u_email:
+            sample_deadlines = get_compliance_deadlines(datetime.date.today().year, datetime.date.today().month)
+            sample_item = sample_deadlines[0] if sample_deadlines else {
+                "title": "GST GSTR-3B Monthly Return",
+                "form": "GSTR-3B",
+                "due_date": datetime.date.today() + datetime.timedelta(days=2),
+                "description": "Monthly summary return and tax payment"
+            }
+            test_html = build_due_alert_html(st.session_state.get('user_name', 'Client'), sample_item, 2)
+            ok, msg = send_compliance_email(u_email, f"🧪 Test Compliance Alert: {sample_item['title']}", test_html)
+            if ok:
+                st.success(f"Test email sent to {u_email}!")
+            else:
+                st.error(f"Email failed: {msg}")
+        else:
+            st.warning("No email address found for your account.")
 
     st.divider()
     st.markdown("#### 👤 Account")
@@ -986,7 +1215,7 @@ if len(current_messages) == 0:
 
 # --- 9. DYNAMIC STATUTORY COMPLIANCE CALENDAR & DUE DATE TRACKER ---
 with st.expander("📅 Statutory Compliance Calendar & Due Date Tracker", expanded=(len(current_messages) == 0)):
-    st.caption("Live statutory tracker for GST, TDS Challan 281 & Returns (24Q/26Q), PF/ESIC, and Advance Tax Installments.")
+    st.caption("Live statutory tracker for GST, TDS Challan 281 & Returns (24Q/26Q), PF/ESIC, and Advance Tax Installments. Automated 5-stage emails active.")
     
     c_m1, c_m2, c_m3 = st.columns([2, 2, 3])
     month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
@@ -1015,7 +1244,7 @@ with st.expander("📅 Statutory Compliance Calendar & Due Date Tracker", expand
 
     st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
     
-    # Render Clean Table / Rows
+    # Render Rows
     for item in active_deadlines:
         c_badge = "badge-gst" if "GST" in item["category"] else ("badge-tds" if "TDS" in item["category"] else ("badge-pf" if "PF" in item["category"] else "badge-tax"))
         formatted_date = item["due_date"].strftime("%d %b, %Y (%A)")
@@ -1036,7 +1265,7 @@ with st.expander("📅 Statutory Compliance Calendar & Due Date Tracker", expand
                 st.rerun()
         st.divider()
 
-# --- 10. RENDER MESSAGES (CHATGPT STYLE: DISPLAY USER IMAGES + TEXT) ---
+# --- 10. RENDER MESSAGES (CHATGPT STYLE) ---
 for msg in current_messages:
     with st.chat_message(msg["role"]):
         content = msg["content"]
@@ -1065,7 +1294,7 @@ if current_messages:
         xlsx_file = generate_xlsx(full_chat_text)
         st.download_button("📊 Export Consultation to Excel (.xlsx)", data=xlsx_file, file_name="Kavach_AI_Summary_Data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-# --- 11. CHATGPT-STYLE ATTACHMENT & VOICE WIDGETS ---
+# --- 11. ATTACHMENT & VOICE WIDGETS ---
 c_att_box, c_mic_box = st.columns([1, 1])
 
 with c_att_box:
