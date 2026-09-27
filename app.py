@@ -46,7 +46,7 @@ warnings.filterwarnings("ignore")
 st.set_page_config(
     page_title="Kavach AI — NextGen FinHR", 
     page_icon="🛡️", 
-    layout="wide",
+    layout="wide", 
     initial_sidebar_state="collapsed"
 )
 
@@ -226,6 +226,22 @@ st.markdown("""
         margin: 0 !important;
     }
 
+    /* 8. Compliance Calendar Styling */
+    .calendar-card {
+        background-color: #FFFFFF;
+        border: 1px solid #E5E5E5;
+        border-radius: 12px;
+        padding: 12px 16px;
+        margin-bottom: 8px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .badge-gst { background-color: #EFF6FF; color: #1D4ED8; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+    .badge-tds { background-color: #FEF3C7; color: #B45309; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+    .badge-pf { background-color: #ECFDF5; color: #047857; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+    .badge-tax { background-color: #F5F3FF; color: #6D28D9; padding: 3px 8px; border-radius: 6px; font-size: 12px; font-weight: 600; }
+
     /* Sidebar Controls */
     header[data-testid="stHeader"] {
         background: transparent !important;
@@ -249,6 +265,151 @@ def clean_html_tags(text):
     if not text:
         return ""
     return text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n").replace("</br>", "\n")
+
+# --- STATUTORY COMPLIANCE CALENDAR ENGINE ---
+def get_compliance_deadlines(target_year, target_month):
+    """
+    Computes statutory compliance deadlines for Indian Tax, GST, PF/ESIC & Advance Tax
+    for any selected month and year.
+    """
+    today = datetime.date.today()
+    deadlines = []
+
+    # 1. TDS Monthly Deposit (Challan ITNS 281)
+    # Deduction for preceding month. Note: March deduction is due by 30th April.
+    if target_month == 4:
+        tds_date = datetime.date(target_year, 4, 30)
+        tds_desc = "TDS payment for March deductions (Challan 281 - extended due date)"
+    else:
+        tds_date = datetime.date(target_year, target_month, 7)
+        tds_desc = "Deposit of TDS deducted in previous month (Challan ITNS 281)"
+    
+    deadlines.append({
+        "category": "TDS",
+        "form": "Challan 281",
+        "due_date": tds_date,
+        "title": "TDS Challan 281 Monthly Deposit",
+        "description": tds_desc
+    })
+
+    # 2. GST: GSTR-1 (Monthly outward supplies)
+    deadlines.append({
+        "category": "GST",
+        "form": "GSTR-1",
+        "due_date": datetime.date(target_year, target_month, 11),
+        "title": "GSTR-1 Monthly Return",
+        "description": "Details of outward supplies (sales) for monthly filers (Turnover > ₹5 Cr or non-QRMP)"
+    })
+
+    # 3. PF & ESIC Monthly Deposit
+    deadlines.append({
+        "category": "PF/ESIC",
+        "form": "EPF ECR & ESIC",
+        "due_date": datetime.date(target_year, target_month, 15),
+        "title": "PF & ESIC Monthly Contribution",
+        "description": "Deposit of employee & employer contributions (EPF ECR & ESIC) for previous month's wages"
+    })
+
+    # 4. GST: GSTR-3B (Monthly summary return & tax payment)
+    deadlines.append({
+        "category": "GST",
+        "form": "GSTR-3B",
+        "due_date": datetime.date(target_year, target_month, 20),
+        "title": "GSTR-3B Monthly Return & Tax Payment",
+        "description": "Monthly summary return, ITC reconciliation, and final tax payment for regular filers"
+    })
+
+    # 5. Quarterly TDS Returns (Form 24Q - Salary, Form 26Q - Non-Salary)
+    # Due: Q1 (Apr-Jun) -> 31 Jul; Q2 (Jul-Sep) -> 31 Oct; Q3 (Oct-Dec) -> 31 Jan; Q4 (Jan-Mar) -> 31 May
+    if target_month == 7:
+        deadlines.append({
+            "category": "TDS",
+            "form": "Form 24Q & 26Q",
+            "due_date": datetime.date(target_year, 7, 31),
+            "title": "TDS Return Q1 (Apr - Jun)",
+            "description": "Quarterly TDS return statement for Q1 (Salaries & Non-salaries)"
+        })
+    elif target_month == 10:
+        deadlines.append({
+            "category": "TDS",
+            "form": "Form 24Q & 26Q",
+            "due_date": datetime.date(target_year, 10, 31),
+            "title": "TDS Return Q2 (Jul - Sep)",
+            "description": "Quarterly TDS return statement for Q2 (Salaries & Non-salaries)"
+        })
+    elif target_month == 1:
+        deadlines.append({
+            "category": "TDS",
+            "form": "Form 24Q & 26Q",
+            "due_date": datetime.date(target_year, 1, 31),
+            "title": "TDS Return Q3 (Oct - Dec)",
+            "description": "Quarterly TDS return statement for Q3 (Salaries & Non-salaries)"
+        })
+    elif target_month == 5:
+        deadlines.append({
+            "category": "TDS",
+            "form": "Form 24Q & 26Q",
+            "due_date": datetime.date(target_year, 5, 31),
+            "title": "TDS Return Q4 (Jan - Mar)",
+            "description": "Quarterly TDS return statement for Q4 (Salaries & Non-salaries)"
+        })
+
+    # 6. Advance Tax Installments
+    # 15 June (15%), 15 Sep (45%), 15 Dec (75%), 15 March (100%)
+    if target_month == 6:
+        deadlines.append({
+            "category": "Advance Tax",
+            "form": "Challan 280",
+            "due_date": datetime.date(target_year, 6, 15),
+            "title": "Advance Tax — 1st Installment (15%)",
+            "description": "Payment of 15% estimated advance income tax for individuals & corporate assesses"
+        })
+    elif target_month == 9:
+        deadlines.append({
+            "category": "Advance Tax",
+            "form": "Challan 280",
+            "due_date": datetime.date(target_year, 9, 15),
+            "title": "Advance Tax — 2nd Installment (45%)",
+            "description": "Payment of 45% cumulative estimated advance income tax"
+        })
+    elif target_month == 12:
+        deadlines.append({
+            "category": "Advance Tax",
+            "form": "Challan 280",
+            "due_date": datetime.date(target_year, 12, 15),
+            "title": "Advance Tax — 3rd Installment (75%)",
+            "description": "Payment of 75% cumulative estimated advance income tax"
+        })
+    elif target_month == 3:
+        deadlines.append({
+            "category": "Advance Tax",
+            "form": "Challan 280",
+            "due_date": datetime.date(target_year, 3, 15),
+            "title": "Advance Tax — 4th Installment (100%)",
+            "description": "Final 100% advance income tax deposit for the current financial year"
+        })
+
+    # Sort chronologically
+    deadlines.sort(key=lambda x: x["due_date"])
+
+    # Compute status relative to current date
+    for item in deadlines:
+        delta = (item["due_date"] - today).days
+        item["days_delta"] = delta
+        if delta < 0:
+            item["status_label"] = f"Passed ({abs(delta)}d ago)"
+            item["status_color"] = "#94A3B8"
+        elif delta == 0:
+            item["status_label"] = "Due Today!"
+            item["status_color"] = "#EF4444"
+        elif delta <= 5:
+            item["status_label"] = f"Due in {delta} days"
+            item["status_color"] = "#F59E0B"
+        else:
+            item["status_label"] = f"In {delta} days"
+            item["status_color"] = "#10B981"
+
+    return deadlines
 
 # --- LIVE INTERNET SEARCH FUNCTION ---
 def perform_live_web_search(query, max_results=4):
@@ -277,7 +438,6 @@ DB_PATH = os.path.join(BASE_DIR, "tax_system.db")
 @contextlib.contextmanager
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=60.0, check_same_thread=False)
-    # WAL Mode prevents "database is locked" errors in multi-threaded Streamlit
     conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA busy_timeout = 30000;")
     conn.execute("PRAGMA synchronous = NORMAL;")
@@ -341,14 +501,12 @@ def set_cell_background(cell, hex_color):
 def generate_docx(title, full_chat_text):
     doc = Document()
     
-    # 1. Page Margins (0.8 inch clean executive layout)
     for section in doc.sections:
         section.top_margin = Inches(0.8)
         section.bottom_margin = Inches(0.8)
         section.left_margin = Inches(0.9)
         section.right_margin = Inches(0.9)
 
-    # 2. Executive Cover Banner
     p_badge = doc.add_paragraph()
     r_badge = p_badge.add_run("CONFIDENTIAL & STATUTORY ADVISORY REPORT")
     r_badge.font.name = "Segoe UI"
@@ -372,7 +530,6 @@ def generate_docx(title, full_chat_text):
     
     doc.add_paragraph().paragraph_format.space_after = Pt(8)
 
-    # 3. Process Content Block by Block
     cleaned_content = clean_html_tags(full_chat_text)
     lines = cleaned_content.split("\n")
     
@@ -395,7 +552,6 @@ def generate_docx(title, full_chat_text):
         table = doc.add_table(rows=len(data_rows) + 1, cols=len(headers))
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         
-        # Header Row Styling (Dark Navy with White Bold Text)
         hdr_cells = table.rows[0].cells
         for i, header_text in enumerate(headers):
             hdr_cells[i].text = header_text
@@ -408,7 +564,6 @@ def generate_docx(title, full_chat_text):
                 r.font.bold = True
                 r.font.color.rgb = RGBColor(255, 255, 255)
         
-        # Data Rows (Alternating Zebra Striping)
         for r_idx, row_data in enumerate(data_rows):
             row_cells = table.rows[r_idx + 1].cells
             bg_color = "F8FAFC" if r_idx % 2 == 0 else "FFFFFF"
@@ -629,7 +784,7 @@ def get_vector_db():
 
 vector_db = get_vector_db()
 
-# --- 3. SECURE API KEY (NO LEAKED FALLBACKS) ---
+# --- 3. SECURE API KEY ---
 groq_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
 
 # --- 4. PERMANENT AUTO-LOGIN & STATE ---
@@ -649,6 +804,10 @@ if "last_processed_voice" not in st.session_state:
     st.session_state.last_processed_voice = None
 if "custom_groq_key" not in st.session_state:
     st.session_state.custom_groq_key = ""
+if "cal_month" not in st.session_state:
+    st.session_state.cal_month = datetime.date.today().month
+if "cal_year" not in st.session_state:
+    st.session_state.cal_year = datetime.date.today().year
 
 auth_token = st.query_params.get("session_auth")
 if not st.session_state.user_id and auth_token:
@@ -721,12 +880,11 @@ if not st.session_state.user_id:
 # Effective Groq Key resolution
 active_groq_key = st.session_state.custom_groq_key.strip() or groq_key
 
-# --- 6. SIDEBAR: CHAT HISTORY & PROFILE ---
+# --- 6. SIDEBAR: CHAT HISTORY, COMPLIANCE SHORTCUT & PROFILE ---
 with st.sidebar:
     st.markdown("### 🛡️ Kavach AI")
     st.caption("NextGen FinHR Architecture")
 
-    # Safe Key Input if not found in env
     if not active_groq_key:
         st.warning("⚠️ Groq API Key required!")
         api_input = st.text_input("Enter Groq API Key", type="password", key="sidebar_key_input")
@@ -796,15 +954,14 @@ if st.session_state.current_convo_id:
         cur.execute("SELECT role, content FROM messages WHERE conversation_id=? ORDER BY id ASC", (st.session_state.current_convo_id,))
         current_messages = [{"role": r, "content": c} for r, c in cur.fetchall()]
 
-# Greeting Name
 user_greeting_name = st.session_state.get("user_name") or "there"
 
 # --- 8. HERO GREETING & CHIPS (EMPTY CHAT STATE) ---
 if len(current_messages) == 0:
     st.markdown(f"""
-    <div style="text-align: left; margin-top: 2rem; margin-bottom: 2rem;">
+    <div style="text-align: left; margin-top: 1.5rem; margin-bottom: 1.2rem;">
         <h1 style="font-size: 2.2rem; font-weight: 600; color: #0D0D0D; margin-bottom: 0.4rem;">Hello, {user_greeting_name}</h1>
-        <p style="font-size: 1.2rem; color: #666666; font-weight: 400;">How can Kavach AI shield your business today?</p>
+        <p style="font-size: 1.15rem; color: #666666; font-weight: 400;">How can Kavach AI shield your business today?</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -823,11 +980,63 @@ if len(current_messages) == 0:
             st.session_state.chip_query = "Explain Tax Collected at Source (TCS) and TDS rates under Section 206C and GST Section 52 with limits."
             st.rerun()
             
-        if st.button("💼 New vs Old Tax Regime\n\nDirect comparison for business and salaried individuals", use_container_width=True, key="chip_regime"):
-            st.session_state.chip_query = "Compare the New Tax Regime vs Old Tax Regime with key deductions, slabs, and break-even points."
+        if st.button("📅 View Compliance Calendar\n\nAll GST, TDS, PF/ESIC & Advance Tax deadlines", use_container_width=True, key="chip_cal"):
+            st.session_state.chip_query = "Provide a comprehensive Statutory Compliance Calendar for this month covering GST (GSTR-1, 3B), TDS, PF/ESIC, and Advance Tax."
             st.rerun()
 
-# --- 9. RENDER MESSAGES (CHATGPT STYLE: DISPLAY USER IMAGES + TEXT) ---
+# --- 9. DYNAMIC STATUTORY COMPLIANCE CALENDAR & DUE DATE TRACKER ---
+with st.expander("📅 Statutory Compliance Calendar & Due Date Tracker", expanded=(len(current_messages) == 0)):
+    st.caption("Live statutory tracker for GST, TDS Challan 281 & Returns (24Q/26Q), PF/ESIC, and Advance Tax Installments.")
+    
+    c_m1, c_m2, c_m3 = st.columns([2, 2, 3])
+    month_names = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+    
+    with c_m1:
+        sel_month_name = st.selectbox("Month", options=month_names, index=st.session_state.cal_month - 1, key="widget_cal_month")
+        target_month_num = month_names.index(sel_month_name) + 1
+    with c_m2:
+        target_year_val = st.number_input("Year", min_value=2024, max_value=2030, value=st.session_state.cal_year, step=1, key="widget_cal_year")
+    with c_m3:
+        cat_filter = st.selectbox("Category Filter", ["All Categories", "GST", "TDS", "PF/ESIC", "Advance Tax"])
+
+    active_deadlines = get_compliance_deadlines(target_year_val, target_month_num)
+    if cat_filter != "All Categories":
+        active_deadlines = [d for d in active_deadlines if d["category"] == cat_filter]
+
+    # Metrics Summary
+    today_dt = datetime.date.today()
+    pending_count = len([d for d in active_deadlines if d["due_date"] >= today_dt])
+    overdue_count = len([d for d in active_deadlines if d["due_date"] < today_dt and d["due_date"].month == today_dt.month and d["due_date"].year == today_dt.year])
+    
+    m_col1, m_col2, m_col3 = st.columns(3)
+    m_col1.metric("Total Compliance Items", len(active_deadlines))
+    m_col2.metric("Upcoming / Due", pending_count)
+    m_col3.metric("Passed Deadlines", overdue_count)
+
+    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+    
+    # Render Clean Table / Rows
+    for item in active_deadlines:
+        c_badge = "badge-gst" if "GST" in item["category"] else ("badge-tds" if "TDS" in item["category"] else ("badge-pf" if "PF" in item["category"] else "badge-tax"))
+        formatted_date = item["due_date"].strftime("%d %b, %Y (%A)")
+        
+        c_row1, c_row2 = st.columns([5, 2])
+        with c_row1:
+            st.markdown(f"""
+            <div style="padding: 6px 0;">
+                <span class="{c_badge}">{item['category']}</span> &nbsp; <strong>{item['title']}</strong> &nbsp;•&nbsp; <code>{item['form']}</code><br>
+                <small style="color: #64748B;">{item['description']}</small><br>
+                <span style="font-size: 13.5px; font-weight: 500; color: #1E293B;">🗓️ Due: {formatted_date}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        with c_row2:
+            st.markdown(f"<div style='text-align: right; padding-top: 8px;'><span style='background-color: {item['status_color']}20; color: {item['status_color']}; padding: 4px 10px; border-radius: 12px; font-size: 12.5px; font-weight: 600;'>{item['status_label']}</span></div>", unsafe_allow_html=True)
+            if st.button("Ask Kavach", key=f"ask_cal_{item['category']}_{item['due_date']}_{item['form']}", use_container_width=True):
+                st.session_state.chip_query = f"Explain filing procedure, late fees, interest, and step-by-step checklist for {item['title']} due on {formatted_date}."
+                st.rerun()
+        st.divider()
+
+# --- 10. RENDER MESSAGES (CHATGPT STYLE: DISPLAY USER IMAGES + TEXT) ---
 for msg in current_messages:
     with st.chat_message(msg["role"]):
         content = msg["content"]
@@ -856,7 +1065,7 @@ if current_messages:
         xlsx_file = generate_xlsx(full_chat_text)
         st.download_button("📊 Export Consultation to Excel (.xlsx)", data=xlsx_file, file_name="Kavach_AI_Summary_Data.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-# --- 10. CHATGPT-STYLE ATTACHMENT & VOICE WIDGETS ---
+# --- 11. CHATGPT-STYLE ATTACHMENT & VOICE WIDGETS ---
 c_att_box, c_mic_box = st.columns([1, 1])
 
 with c_att_box:
@@ -903,7 +1112,7 @@ with c_mic_box:
                         except Exception as e:
                             st.error(f"Voice Transcription Error: {e}")
 
-# Live Attachment Banner (Shown right above the prompt box like ChatGPT)
+# Live Attachment Banner
 if st.session_state.active_attachment:
     att = st.session_state.active_attachment
     c_preview, c_del = st.columns([4, 1])
@@ -919,7 +1128,7 @@ if st.session_state.active_attachment:
             st.session_state.uploader_id += 1
             st.rerun()
 
-# --- 11. CHAT INPUT & EXECUTION PIPELINE ---
+# --- 12. CHAT INPUT & EXECUTION PIPELINE ---
 chat_input_val = st.chat_input("Ask anything about Tax, GST, Compliance, Payroll, or ask about attached image/doc...")
 
 user_query = None
@@ -942,7 +1151,6 @@ if user_query:
             c_conn.commit()
             st.session_state.current_convo_id = cur.lastrowid
 
-    # FIX #1: Track image type cleanly to prevent NameError
     attached_data_text = ""
     attached_image_b64 = None
     attached_img_type = "jpeg"
@@ -960,7 +1168,6 @@ if user_query:
                 reader = PdfReader(io.BytesIO(att["bytes"]))
                 extracted_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
                 pdf_text = "\n".join(extracted_pages)
-                # FIX #5: Warn on scanned image PDFs
                 if not pdf_text.strip():
                     pdf_text = "[Notice: This PDF appears to be a scanned image document without extractable text layer. Please upload as an image (JPG/PNG) for visual inspection.]"
                 attached_data_text = f"\n[User Attached PDF Document ({att['name']}) Content]:\n{pdf_text[:15000]}"
@@ -1038,25 +1245,28 @@ if user_query:
     1. Indian Finance & Taxation (Income Tax Act 1961, CGST/SGST/IGST Acts, Corporate Tax, Audits)
     2. HR & Labour Law Compliance (Payroll, EPF/ESIC, Gratuity, Bonus, Labour Codes)
 
+    STATUTORY COMPLIANCE CALENDAR & DUE DATE RULES:
+    Always refer to these statutory deadlines when asked about due dates or monthly compliance:
+    - PF & ESIC: 15th of every month (for preceding month's wage deductions & contributions).
+    - GST GSTR-1: 11th of subsequent month (Outward supplies for regular monthly filers).
+    - GST GSTR-3B: 20th of subsequent month (Summary return & tax payment for monthly filers).
+    - TDS Challan 281: 7th of the following month (Exception: March TDS payment due by April 30).
+    - Quarterly TDS Returns (24Q/26Q): Q1 -> 31 July; Q2 -> 31 October; Q3 -> 31 January; Q4 -> 31 May.
+    - Advance Tax Installments: 15 June (15%), 15 September (45%), 15 December (75%), 15 March (100%).
+
     CRITICAL TAX ACRONYM RULE:
     - Your core primary domain is INDIAN TAXATION and BUSINESS COMPLIANCE.
-    - Whenever the user types an acronym like "TCS", "TDS", "ITC", "GST", "MAT", "AMT", "PF", or "ESIC", you MUST ALWAYS interpret it as its TAX / COMPLIANCE definition.
-    - Specifically, "TCS" MUST ALWAYS be answered as **TCS — Tax Collected at Source** under the Income Tax Act (Section 206C) and GST Act (Section 52 - E-Commerce Operator). NEVER discuss Tata Consultancy Services or stock markets unless the user specifically asks about "Tata shares" or "TCS stock price".
+    - Acronyms like "TCS", "TDS", "ITC", "GST", "MAT", "AMT", "PF", or "ESIC" MUST ALWAYS be interpreted as their statutory definitions.
 
     VISION & DOCUMENT ANALYSIS RULE:
-    - If the user has provided an attached image or document, meticulously read every number, tax calculation, GSTIN, invoice date, notice section, and clause. 
+    - Meticulously read every number, tax calculation, GSTIN, invoice date, notice section, and clause.
     - Formulate your response around the attached visual data.
 
     STRUCTURE OF YOUR RESPONSE (EXACT CHATGPT STYLE):
-    1. Direct Concept Header (e.g. `### TCS — Tax Collected at Source`)
+    1. Direct Concept Header (e.g. `### Statutory Compliance Assessment`)
     2. The Major Contexts & Sections
     3. Practical Real-World Corporate Example (Scenario + Math Calculation Table)
     4. Compliance Deadlines & Action Items
-
-    FORMATTING RULES:
-    - Clean Markdown only (No raw HTML tags).
-    - Use clean Markdown tables for numbers and calculations.
-    - Professional, authoritative, and helpful tone in Hinglish / English.
 
     [Internal Statutory Context]:
     {statutory_context}
@@ -1079,9 +1289,8 @@ if user_query:
         except Exception:
             available_models = []
 
-        # --- MULTIMODAL VISION ROUTING (IMAGE QUERIES) ---
+        # --- MULTIMODAL VISION ROUTING ---
         if attached_image_b64:
-            # FIX #2: Reliable Groq Vision models
             preferred_vision = [
                 "llama-3.2-11b-vision-preview",
                 "llama-3.2-90b-vision-preview",
@@ -1129,7 +1338,6 @@ if user_query:
                     llm_messages.append({"role": prev_msg["role"], "content": prev_msg["content"]})
             llm_messages.append({"role": "user", "content": user_query})
 
-            # FIX #2: Reliable production text models
             preferred_text = [
                 "llama-3.3-70b-versatile",
                 "llama-3.1-8b-instant",
