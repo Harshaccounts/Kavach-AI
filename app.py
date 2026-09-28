@@ -1446,65 +1446,41 @@ if user_query:
             st.image(f"data:image/{attached_img_type};base64,{attached_image_b64}", width=320)
         st.markdown(user_query)
 
-    # 1. Statutory Context from Local Vector DB (Bypass for 2025 Act to prevent old 1961 interference)
+# 1. Statutory Context (2025 ya New Act par purana vector DB bypass karein)
     statutory_context = ""
-    is_asking_new = any(w in user_query.lower() for w in ["2025", "2026", "new act", "new law", "naya act", "latest"])
+    is_asking_new = any(w in user_query.lower() for w in ["2025", "2026", "new act", "new law", "naya act", "latest", "amendment", "slab"])
     
     if vector_db and not is_asking_new:
-        lookup_token = "206C" if user_query.strip().upper() == "TCS" else None
-        if not lookup_token:
-            sec_match = re.search(r'\b(?:section|sec|rule|धारा|नियम)?\s*([0-9]{1,4}[a-z]{0,3})\b', user_query, re.IGNORECASE)
-            lookup_token = sec_match.group(1).upper() if sec_match else None
-        
         try:
-            retrieved_docs = vector_db.similarity_search(user_query, k=4)
+            retrieved_docs = vector_db.similarity_search(user_query, k=3)
             if retrieved_docs:
                 statutory_context = "\n\n---\n\n".join([d.page_content for d in retrieved_docs])
         except Exception:
             statutory_context = ""
 
-    # 2. Live Web Search (Cleaned Keywords)
+    # 2. Live Web Search
     live_web_context = perform_live_web_search(user_query)
 
-    # --- ADVANCED SYSTEM INSTRUCTION: INCOME-TAX ACT, 2025 MASTER LAW ---
+    # 3. Master Governing Instruction (Income-Tax Act, 2025 Override)
     system_instruction = f"""
-You are Kavach AI (NextGen FinHR), an authoritative AI Counsel for Chartered Accountants (CAs), Tax Advocates, and Corporate Finance Heads in India.
+You are Kavach AI (NextGen FinHR), an authoritative AI Counsel for Chartered Accountants (CAs) and Tax Professionals in India.
 
-CRITICAL GOVERNING STATUTE: THE INCOME-TAX ACT, 2025 (ACT NO. 30 OF 2025)
-- India has enacted 'The Income-tax Act, 2025' to replace the 6-decade-old Income-tax Act, 1961. It enters into force from 1st April 2026.
-- Whenever the user asks about 'Income Tax Act 2025', current tax rules, or direct tax compliance, you MUST deliver answers strictly based on this updated statutory architecture. NEVER default to obsolete 1961 provisions.
+ABSOLUTE STATUTORY OVERRIDE:
+- THE INCOME-TAX ACT, 2025 (Act No. 30 of 2025) has been enacted by the Indian Parliament to replace the 6-decade-old Income-tax Act, 1961, coming into force from 1 April 2026.
+- Whenever asked about 'Income Tax Act 2025', current tax provisions, or slabs, you MUST explain the Income-tax Act, 2025 and Finance Acts 2024/2025.
+- DO NOT say 'India follows Income Tax Act 1961' without explaining that it is being replaced by the Income-tax Act, 2025.
 
-CORE UPDATED STATUTORY PROVISIONS:
-1. TAX SLABS & REGIME (DEFAULT REGIME):
-   - The New Tax Regime under Section 115BAC is the default tax regime in India.
-   - Standard deduction for salaried employees is Rs 75,000.
-   - Full tax rebate under Section 87A covers total taxable income up to Rs 7.75 Lakhs with zero tax liability.
-   - Slabs: 0 to Rs 3L: Nil; Rs 3L to 7L: 5%; Rs 7L to 10L: 10%; Rs 10L to 12L: 15%; Rs 12L to 15L: 20%; Above Rs 15L: 30%.
-2. CAPITAL GAINS REFORM:
-   - Short Term Capital Gains (STCG) on listed equity: 20 percent (Section 111A).
-   - Long Term Capital Gains (LTCG) on listed equity and mutual funds: 12.5 percent (Section 112A) with Rs 1.25 Lakh annual basic exemption.
-   - Real Estate & Unlisted Assets: Holding period 24 months. Indexation removed with grandfathering optionality for acquisitions prior to 23 July 2024.
-3. REASSESSMENT & NOTICES:
-   - Standard reassessment time limit: Strictly limited to 3 years from the end of the relevant assessment year.
-   - Extended reassessment limit: Maximum 5 years (only where escaped income exceeds Rs 50 Lakhs with search/seizure material).
-4. CORPORATE & STARTUP REFORMS:
-   - Angel Tax (Section 56(2)(viib)): Abolished completely for all investor classes.
-   - Foreign Company Tax Rate: Reduced from 40% to 35%.
+KEY STATUTORY BENCHMARKS:
+1. DEFAULT REGIME (Sec 115BAC): Standard deduction is Rs 75,000. Rebate under Sec 87A provides zero tax up to Rs 7.75 Lakhs. Slabs: 0-3L Nil, 3-7L 5%, 7-10L 10%, 10-12L 15%, 12-15L 20%, >15L 30%.
+2. CAPITAL GAINS: STCG on listed equity is 20% (Sec 111A). LTCG is 12.5% (Sec 112A) with Rs 1.25 Lakh exemption limit.
+3. REASSESSMENT: Standard reassessment is 3 years; maximum 5 years for serious evasion > Rs 50 Lakhs.
+4. ANGEL TAX: Completely abolished for all investor classes.
 
-STATUTORY DUE DATES & COMPLIANCES:
+STATUTORY CALENDAR:
 - PF & ESIC: 15th of every month.
-- GST GSTR-1: 11th of subsequent month; GSTR-3B: 20th of subsequent month.
-- TDS Challan 281: 7th of following month (March deduction due by April 30).
-- Advance Tax: 15 June (15%), 15 September (45%), 15 December (75%), 15 March (100%).
-
-CRITICAL ACRONYM RULE:
-- Acronyms like 'TCS', 'TDS', 'ITC', 'GST', 'PF', 'ESIC' MUST ALWAYS be interpreted as their statutory tax/compliance definitions. TCS = Tax Collected at Source (Section 206C & GST Section 52).
-
-OUTPUT STRUCTURE:
-- Direct Concept Header
-- Exact Statutory Sections (Income-tax Act, 2025 / CGST Act)
-- Calculation & Math Breakdown Table
-- Actionable Guidance for CA / Assessee with AY/FY clarity.
+- GST GSTR-1: 11th; GSTR-3B: 20th of every month.
+- TDS Challan 281: 7th of every month (March due by April 30).
+- Advance Tax: 15 June (15%), 15 Sep (45%), 15 Dec (75%), 15 March (100%).
 
 [Live Internet Data]:
 {live_web_context}
