@@ -1498,6 +1498,22 @@ if user_query:
             
         if retrieved_docs:
             statutory_context = "\n\n---\n\n".join([d.page_content for d in retrieved_docs])
+            # 1. Statutory Context from Local Vector DB (Bypass if asking about 2025 Act)
+    statutory_context = ""
+    is_asking_new_act = any(w in user_query.lower() for w in ["2025", "2026", "new act", "new law", "naya act"])
+    
+    if vector_db and not is_asking_new_act:
+        lookup_token = "206C" if user_query.strip().upper() == "TCS" else None
+        if not lookup_token:
+            sec_match = re.search(r'\b(?:section|sec|rule|धारा|नियम)?\s*([0-9]{1,4}[a-z]{0,3})\b', user_query, re.IGNORECASE)
+            lookup_token = sec_match.group(1).upper() if sec_match else None
+        
+        try:
+            retrieved_docs = vector_db.similarity_search(user_query, k=4)
+            if retrieved_docs:
+                statutory_context = "\n\n---\n\n".join([d.page_content for d in retrieved_docs])
+        except Exception:
+            statutory_context = ""
 
     # 2. Live Web Search
     live_web_context = perform_live_web_search(user_query)
