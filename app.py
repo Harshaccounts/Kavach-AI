@@ -1553,7 +1553,6 @@ PRIMARY TAX REGIME & STATUTORY BASELINE:
 5. REASSESSMENT & NOTICES: Refer to simplified reassessment timelines (maximum 5 years for serious evasion over Rs 50 Lakhs under the updated framework).
 
 STATUTORY DUE DATES & COMPLIANCES:
-- PF & ESIC: 15th of every month.
 - GST GSTR-1: 11th of subsequent month.
 - GST GSTR-3B: 20th of subsequent month.
 - TDS Challan 281: 7th of following month (March deduction due by April 30).
