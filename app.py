@@ -607,13 +607,20 @@ def init_background_compliance_scheduler():
 
 init_background_compliance_scheduler()
 
-# --- LIVE INTERNET SEARCH FUNCTION ---
-def perform_live_web_search(query, max_results=4):
+# --- ENHANCED LIVE STATUTORY SEARCH ---
+def perform_live_web_search(query, max_results=5):
     if not HAS_DDG:
         return ""
     try:
         with DDGS() as ddgs:
-            search_term = f"{query} Tax Collected at Source GST Income Tax Act India circular" if query.strip().upper() == "TCS" else f"{query} India tax compliance circular 2025 2026"
+            # New Income Tax Act 2025 / Latest Budget Circulars Search
+            if any(k in query.lower() for k in ["2025", "2026", "new act", "bill", "amendment", "slab", "regime"]):
+                search_term = f"{query} Income Tax Act 2025 India latest amendment circular PIB incometaxindia"
+            elif query.strip().upper() == "TCS":
+                search_term = "TCS Tax Collected at Source 206C rates limits India 2025 2026"
+            else:
+                search_term = f"{query} India tax compliance circular Income Tax Act 2025 2026"
+                
             results = list(ddgs.text(search_term, max_results=max_results))
             if results:
                 formatted = []
@@ -621,7 +628,7 @@ def perform_live_web_search(query, max_results=4):
                     title = r.get("title", "")
                     snippet = r.get("body", "")
                     link = r.get("href", "")
-                    formatted.append(f"• Source Title: {title}\n  Details: {snippet}\n  Link: {link}")
+                    formatted.append(f"• Source: [{title}]({link})\n  Statutory Provision: {snippet}")
                 return "\n\n".join(formatted)
     except Exception:
         return ""
