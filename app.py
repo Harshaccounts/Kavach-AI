@@ -1552,11 +1552,6 @@ PRIMARY TAX REGIME & STATUTORY BASELINE:
 4. ANGEL TAX: Fully abolished for all classes of investors.
 5. REASSESSMENT & NOTICES: Refer to simplified reassessment timelines (maximum 5 years for serious evasion over Rs 50 Lakhs under the updated framework).
 
-STATUTORY DUE DATES & COMPLIANCES:
-- GST GSTR-1: 11th of subsequent month.
-- GST GSTR-3B: 20th of subsequent month.
-- TDS Challan 281: 7th of following month (March deduction due by April 30).
-- Advance Tax Installments: 15 June (15%), 15 September (45%), 15 December (75%), 15 March (100%).
 
 OUTPUT TONE FOR CAs & FINANCE PROFESSIONALS:
 - Strict, legally sound, and citing specific sections of the Income-Tax Act, 2025 / CGST Act.
